@@ -1,0 +1,68 @@
+{
+  "name": "git-review-tool",
+  "version": "1.0.0",
+  "description": "Git code review tool with AI analysis",
+  "license": "MIT",
+  "author": {
+    "name": "Your Name",
+    "email": "your.email@example.com"
+  },
+  "main": "main.js",
+  "scripts": {
+    "start": "cross-env NODE_ENV=production npm run build && electron .",
+    "dev": "concurrently \"cross-env NODE_ENV=development vite\" \"cross-env NODE_ENV=development electron .\"",
+    "build": "cross-env NODE_ENV=production vite build",
+    "preview": "cross-env NODE_ENV=production vite preview",
+    "electron:build": "cross-env NODE_ENV=production vite build && electron-builder"
+  },
+  "dependencies": {
+    "@vueuse/core": "^10.2.1",
+    "axios": "^1.4.0",
+    "element-plus": "^2.3.8",
+    "github-markdown-css": "^5.8.1",
+    "highlight.js": "^11.11.1",
+    "lodash": "^4.17.21",
+    "markdown-it": "^14.1.0",
+    "marked": "^15.0.4",
+    "pinia": "^2.1.4",
+    "simple-git": "^3.19.1",
+    "vue": "^3.3.4",
+    "vue-router": "^4.2.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^4.2.3",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^25.3.1",
+    "electron-builder": "^24.6.3",
+    "electron-reloader": "^1.2.3",
+    "vite": "^4.4.7"
+  },
+  "build": {
+    "appId": "com.gitreview.app",
+    "productName": "Git Review Tool",
+    "copyright": "Copyright © 2024 Your Name",
+    "forceCodeSigning": false,
+    "directories": {
+      "output": "dist_electron"
+    },
+    "files": [
+      "dist/**/*",
+      "main.js",
+      "preload.js"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

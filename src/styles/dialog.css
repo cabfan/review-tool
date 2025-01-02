@@ -1,0 +1,42 @@
+.user-settings-form,
+.ai-settings-form {
+  padding: 20px 0;
+}
+
+.form-item {
+  margin-bottom: 15px;
+  display: flex;
+  align-items: center;
+}
+
+.form-item label {
+  width: 80px;
+  text-align: right;
+  padding-right: 10px;
+  flex-shrink: 0;
+}
+
+.form-item input {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  transition: border-color 0.2s;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.form-item input:focus {
+  outline: none;
+  border-color: #409eff;
+}
+
+.form-item input::placeholder {
+  color: #c0c4cc;
+}
+
+/* 密码输入框样式 */
+.form-item input[type="password"] {
+  letter-spacing: 2px;
+  font-family: monospace;
+} 
