@@ -42,6 +42,10 @@ const api = {
     getCommits: createSafeIPCInvoke('get-git-commits'),
     show: createSafeIPCInvoke('git-show')
   },
+  svn: {
+    getCommits: createSafeIPCInvoke('get-svn-commits'),
+    diff: createSafeIPCInvoke('svn-diff')
+  },
   ai: {
     analyze: createSafeIPCInvoke('ai-analyze'),
     onChunk: (callback) => {

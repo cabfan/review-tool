@@ -4,6 +4,10 @@ const fs = require('fs')
 const simpleGit = require('simple-git')
 const https = require('https')
 const { throttle } = require('lodash')
+const { exec } = require('child_process')
+const { promisify } = require('util')
+const execAsync = promisify(exec)
+const xml2js = require('xml2js')
 
 // 开发环境下启用热重载
 if (process.env.NODE_ENV === 'development') {
@@ -22,17 +26,56 @@ const isDev = process.env.NODE_ENV === 'development' || process.env.DEBUG_PROD =
 async function getGitCommits(repoPath, page = 1, pageSize = 50) {
   try {
     const git = simpleGit(repoPath)
+    
+    // 使用 rev-parse 获取当前分支的最新提交
+    const head = await git.raw(['rev-parse', 'HEAD'])
+    
+    // 获取所有提交的 hash 列表来计算总数
+    const allCommits = await git.raw([
+      'log',
+      '--format=%H',
+      '--no-merges',
+      head.trim()
+    ])
+    
+    const totalCommits = allCommits.trim().split('\n').length
+    
+    // 计算正确的 skip 值
     const skip = (page - 1) * pageSize
     
-    // 使用 --skip 和 --max-count 参数来实现分页
+    // 如果 skip 超过了总数，返回空结果
+    if (skip >= totalCommits) {
+      return {
+        commits: [],
+        total: totalCommits,
+        page,
+        pageSize
+      }
+    }
+    
+    // 计算实际需要获取的数量（处理最后一页的情况）
+    const actualPageSize = Math.min(pageSize, totalCommits - skip)
+    
+    // 获取具体的提交信息
     const logOptions = [
+      head.trim(),
       `--skip=${skip}`,
-      `--max-count=${pageSize}`,
+      `--max-count=${actualPageSize}`,
       '--pretty=format:{"hash":"%H","author":"%an","date":"%ai","message":"%s"}',
-      '--no-merges'  // 可选：排除合并提交
+      '--no-merges'
     ]
 
     const result = await git.raw(['log', ...logOptions])
+    
+    // 处理空结果的情况
+    if (!result.trim()) {
+      return {
+        commits: [],
+        total: totalCommits,
+        page,
+        pageSize
+      }
+    }
     
     // 解析日志结果
     const commits = result
@@ -48,13 +91,6 @@ async function getGitCommits(repoPath, page = 1, pageSize = 50) {
       })
       .filter(commit => commit !== null)
 
-    // 获取总提交数（只需要在第一次加载时获取）
-    let totalCommits = 0
-    if (page === 1) {
-      const revList = await git.raw(['rev-list', '--count', 'HEAD'])
-      totalCommits = parseInt(revList.trim(), 10)
-    }
-
     return {
       commits,
       total: totalCommits,
@@ -69,6 +105,103 @@ async function getGitCommits(repoPath, page = 1, pageSize = 50) {
 
 // 添加一个节流的提交记录获取方法
 const throttledGetCommits = throttle(getGitCommits, 1000)
+
+// 在现有代码后添加 SVN 相关函数
+async function getSvnCommits(repoPath, page = 1, pageSize = 50) {
+  try {
+    // 首先检查 SVN 是否已安装
+    try {
+      await execAsync('svn --version')
+    } catch (error) {
+      throw new Error('未安装 SVN 命令行工具，请先安装 TortoiseSVN 或 SVN 命令行工具')
+    }
+    
+    // 获取所有日志
+    const command = `svn log --xml "${repoPath}"`
+    const { stdout } = await execAsync(command)
+    
+    // 使用 xml2js 解析 XML
+    const parser = new xml2js.Parser()
+    const result = await parser.parseStringPromise(stdout)
+    
+    if (!result.log || !result.log.logentry) {
+      return {
+        commits: [],
+        total: 0,
+        page,
+        pageSize
+      }
+    }
+
+    // 获取所有提交记录
+    const allCommits = result.log.logentry.map(entry => ({
+      hash: entry.$.revision,
+      author: entry.author?.[0] || '',
+      date: entry.date?.[0] || '',
+      message: entry.msg?.[0] || ''
+    }))
+
+    const totalCommits = allCommits.length
+    
+    // 计算正确的分页
+    const start = (page - 1) * pageSize
+    const end = Math.min(start + pageSize, totalCommits)
+    
+    // 如果起始位置超过总数，返回空结果
+    if (start >= totalCommits) {
+      return {
+        commits: [],
+        total: totalCommits,
+        page,
+        pageSize
+      }
+    }
+
+    return {
+      commits: allCommits.slice(start, end),
+      total: totalCommits,
+      page,
+      pageSize
+    }
+  } catch (error) {
+    console.error('Error getting svn commits:', error)
+    throw error
+  }
+}
+
+// 获取 SVN 差异
+async function getSvnDiff(repoPath, revision) {
+  try {
+    const command = `svn diff -c ${revision} "${repoPath}"`
+    const { stdout } = await execAsync(command)
+    
+    // 解析差异输出，添加文件路径信息
+    const diffs = []
+    let currentFile = null
+    let currentDiff = []
+    
+    stdout.split('\n').forEach(line => {
+      if (line.startsWith('Index: ')) {
+        if (currentFile) {
+          diffs.push({ path: currentFile, diff: currentDiff.join('\n') })
+        }
+        currentFile = line.slice(7)
+        currentDiff = []
+      } else if (currentFile) {
+        currentDiff.push(line)
+      }
+    })
+    
+    if (currentFile) {
+      diffs.push({ path: currentFile, diff: currentDiff.join('\n') })
+    }
+    
+    return diffs.length ? diffs : [{ path: 'Unknown', diff: stdout }]
+  } catch (error) {
+    console.error('Error getting svn diff:', error)
+    throw new Error(`获取 SVN 差异失败: ${error.message}`)
+  }
+}
 
 // 注册所有 IPC 处理器
 function registerIPCHandlers() {
@@ -207,6 +340,15 @@ function registerIPCHandlers() {
         reject(error)
       }
     })
+  })
+
+  // SVN相关处理器
+  ipcMain.handle('get-svn-commits', async (event, repoPath, page, pageSize) => {
+    return await getSvnCommits(repoPath, page, pageSize)
+  })
+
+  ipcMain.handle('svn-diff', async (event, repoPath, revision) => {
+    return await getSvnDiff(repoPath, revision)
   })
 }
 

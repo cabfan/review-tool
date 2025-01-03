@@ -1,7 +1,7 @@
 {
-  "name": "git-review-tool",
+  "name": "review-tool",
   "version": "1.0.0",
-  "description": "Git code review tool with AI analysis",
+  "description": "Code review tool with AI analysis for Git and SVN",
   "license": "MIT",
   "author": {
     "name": "Your Name",
@@ -16,6 +16,7 @@
     "electron:build": "cross-env NODE_ENV=production vite build && electron-builder"
   },
   "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
     "@vueuse/core": "^10.2.1",
     "axios": "^1.4.0",
     "element-plus": "^2.3.8",
@@ -27,7 +28,8 @@
     "pinia": "^2.1.4",
     "simple-git": "^3.19.1",
     "vue": "^3.3.4",
-    "vue-router": "^4.2.4"
+    "vue-router": "^4.2.4",
+    "xml2js": "^0.6.2"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^4.2.3",
@@ -39,8 +41,8 @@
     "vite": "^4.4.7"
   },
   "build": {
-    "appId": "com.gitreview.app",
-    "productName": "Git Review Tool",
+    "appId": "com.review.app",
+    "productName": "Review Tool",
     "copyright": "Copyright © 2024 Your Name",
     "forceCodeSigning": false,
     "directories": {

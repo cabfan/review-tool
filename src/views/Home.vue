@@ -3,16 +3,20 @@
     <el-container>
       <el-header>
         <div class="header-content">
-          <h2>Git Review Tool</h2>
+          <h2>Review Tool</h2>
           <div class="header-actions">
-            <el-button type="primary" @click="selectDirectory" :disabled="!userStore.isUserSet">
-              选择Git项目
+            <el-select v-model="repoType" placeholder="选择仓库类型" style="width: 120px">
+              <el-option label="Git" value="git" />
+              <el-option label="SVN" value="svn" />
+            </el-select>
+            <el-button type="primary" @click="selectRepo" :disabled="!userStore.isUserSet">
+              选择{{ repoType.toUpperCase() }}项目
             </el-button>
-            <el-button @click="userStore.showUserSettingsDialog">
+            <el-button @click="showUserSettings">
               用户设置
               <el-icon v-if="userStore.isUserSet" class="setting-status"><Check /></el-icon>
             </el-button>
-            <el-button @click="userStore.showAiConfigDialog">
+            <el-button @click="showAiConfig">
               AI设置
               <el-icon v-if="userStore.isAiConfigSet" class="setting-status"><Check /></el-icon>
             </el-button>
@@ -25,6 +29,12 @@
           <el-tab-pane label="提交记录" name="commits">
             <div class="commits-container table-wrapper">
               <el-table :data="commits" style="width: 100%">
+                <el-table-column 
+                  type="index" 
+                  label="序号" 
+                  width="70"
+                  :index="getIndex"
+                />
                 <el-table-column prop="hash" label="提交Hash" width="100" />
                 <el-table-column prop="date" label="日期" width="200" />
                 <el-table-column prop="author" label="作者" width="200" />
@@ -44,10 +54,33 @@
                   v-model:page-size="pageSize"
                   :page-sizes="[20, 50, 100]"
                   :total="totalCommits"
-                  layout="total, sizes, prev, pager, next"
+                  :pager-count="7"
+                  background
+                  :small="true"
+                  prev-text="上一页"
+                  next-text="下一页"
+                  layout="total, sizes, prev, pager, next, jumper"
+                  :page-size-opts="[
+                    { value: 20, label: '20条/页' },
+                    { value: 50, label: '50条/页' },
+                    { value: 100, label: '100条/页' }
+                  ]"
                   @size-change="handleSizeChange"
                   @current-change="handleCurrentChange"
-                />
+                >
+                  <template #total>
+                    共 {{ totalCommits }} 条
+                  </template>
+                  <template #jumper>
+                    前往第
+                    <el-input
+                      v-model.number="currentPage"
+                      class="jump-input"
+                      size="small"
+                    />
+                    页
+                  </template>
+                </el-pagination>
               </div>
             </div>
           </el-tab-pane>
@@ -63,7 +96,12 @@
                 </el-button>
               </div>
 
-              <div class="diff-scroll-area">
+              <div v-if="isLoadingDiff" class="diff-loading">
+                <el-icon class="loading-icon" :size="24"><Loading /></el-icon>
+                <span>正在加载差异内容...</span>
+              </div>
+
+              <div v-else class="diff-scroll-area">
                 <div class="diff-content" v-for="file in diffFiles" :key="file.path">
                   <div class="file-header">{{ file.path }}</div>
                   <div class="diff-view-wrapper">
@@ -84,17 +122,27 @@
               >
                 <div v-if="aiAnalysis" class="analysis-content">
                   <div class="analysis-meta">
-                    <span>分析时间: {{ aiAnalysis.timestamp }}</span>
-                    <span>审查者: {{ aiAnalysis.reviewer }}</span>
+                    <div class="meta-info">
+                      <span>分析时间: {{ aiAnalysis.timestamp }}</span>
+                      <span>审查者: {{ aiAnalysis.reviewer }}</span>
+                    </div>
+                    <el-button
+                      type="primary"
+                      link
+                      :icon="DocumentCopy"
+                      @click="copyAnalysis"
+                      :loading="isCopying"
+                    >
+                      复制分析结果
+                    </el-button>
                   </div>
                   <div v-if="isAnalyzing && aiAnalysis.items.length === 0" class="analysis-loading">
                     <el-icon class="loading-icon" :size="24"><Loading /></el-icon>
                     <span>正在分析中...</span>
                   </div>
                   <template v-else>
-                    <div class="analysis-description markdown-body"
+                    <div class="markdown-body"
                          style="max-height: 400px; overflow-y: auto;"
-                         :class="{ 'typing': isTyping && !aiAnalysis.items[0]?.content.endsWith('```') }"
                          v-html="renderMarkdown(aiAnalysis.items[0]?.content || '')">
                     </div>
                   </template>
@@ -120,17 +168,37 @@
       </el-main>
     </el-container>
   </div>
+
+  <el-dialog
+    v-model="userSettingsVisible"
+    title="用户设置"
+    width="500px"
+    :close-on-click-modal="false"
+  >
+    <user-settings @close="userSettingsVisible = false" />
+  </el-dialog>
+
+  <el-dialog
+    v-model="aiConfigVisible"
+    title="AI设置"
+    width="500px"
+    :close-on-click-modal="false"
+  >
+    <ai-config @close="aiConfigVisible = false" />
+  </el-dialog>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useUserStore } from '../stores/user'
-import { Check, Loading } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Check, Loading, DocumentCopy } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'  // 使用 GitHub 风格的代码高亮样式
 import MarkdownIt from 'markdown-it'
 import 'github-markdown-css'
+import UserSettings from '../components/UserSettings.vue'
+import AiConfig from '../components/AiConfig.vue'
 
 const userStore = useUserStore()
 const currentRepo = ref(null)
@@ -150,6 +218,12 @@ const isTyping = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(50)
 const totalCommits = ref(0)
+const repoType = ref('git')
+const repoPath = ref('')
+const isLoadingDiff = ref(false)
+const isCopying = ref(false)
+const userSettingsVisible = ref(false)
+const aiConfigVisible = ref(false)
 
 const md = new MarkdownIt({
   html: true,
@@ -178,11 +252,17 @@ async function loadCommits() {
   if (!currentRepo.value) return
   
   try {
-    const result = await window.electronAPI.git.getCommits({
-      repoPath: currentRepo.value,
-      page: currentPage.value,
-      pageSize: pageSize.value
-    })
+    const result = repoType.value === 'git'
+      ? await window.electronAPI.git.getCommits({
+          repoPath: currentRepo.value,
+          page: currentPage.value,
+          pageSize: pageSize.value
+        })
+      : await window.electronAPI.svn.getCommits(
+          currentRepo.value,
+          currentPage.value,
+          pageSize.value
+        )
     
     commits.value = result.commits.map(commit => ({
       hash: commit.hash.substring(0, 7),
@@ -192,23 +272,31 @@ async function loadCommits() {
       fullHash: commit.hash
     }))
     
-    if (currentPage.value === 1) {
+    if (result.total) {
       totalCommits.value = result.total
     }
   } catch (error) {
-    ElMessage.error('加载提交记录失败')
+    ElMessage.error(`加载${repoType.value.toUpperCase()}提交记录失败`)
   }
 }
 
 async function viewDiff(commit) {
   selectedCommit.value = commit
   activeTab.value = 'diff'
+  isLoadingDiff.value = true
+  diffFiles.value = [] // 清空之前的差异内容
   
   try {
-    const diff = await window.electronAPI.git.show(currentRepo.value, commit.fullHash)
-    diffFiles.value = parseDiff(diff)
+    const diff = repoType.value === 'git'
+      ? await window.electronAPI.git.show(currentRepo.value, commit.fullHash)
+      : await window.electronAPI.svn.diff(currentRepo.value, commit.hash)
+    
+    // 如果是数组（SVN的情况），直接使用，否则解析Git的输出
+    diffFiles.value = Array.isArray(diff) ? diff : parseDiff(diff)
   } catch (error) {
-    ElMessage.error('加载差异失败')
+    ElMessage.error(`加载${repoType.value.toUpperCase()}差异失败: ${error.message}`)
+  } finally {
+    isLoadingDiff.value = false
   }
 }
 
@@ -266,28 +354,29 @@ async function analyzeCode() {
             const content = json.choices[0]?.delta?.content || ''
             if (content) {
               isTyping.value = true
-              // 直接追加原始内容
               if (aiAnalysis.value.items.length === 0) {
                 aiAnalysis.value.items.push({ content: '' })
               }
               aiAnalysis.value.items[0].content += content
             }
           } catch (e) {
-            // 保留错误处理，但移除日志
+            console.error('Error parsing chunk JSON:', e)
           }
         }
       } catch (e) {
-        // 保留错误处理，但移除日志
+        console.error('Error processing chunk:', e)
       }
     })
 
-    // 发送分析请求
-    await window.electronAPI.ai.analyze(
-      userStore.aiBaseUrl.trim(),
-      userStore.aiApiKey.trim(),
-      `请分析以下Git提交的代码变更，并对每个方面进行评分（满分100分）。请将分析结果用markdown代码块包裹，格式如下：
+    // 构建分析提示
+    const prompt = `请分析以下${repoType.value.toUpperCase()}提交的代码变更，并对每个方面进行评分（满分100分）。
+请特别注意标注每个问题对应的文件路径和具体行号。请将分析结果用markdown代码块包裹，格式如下：
 
 \`\`\`markdown
+# 文件变更概览
+
+${diffFiles.value.map(f => `* ${f.path}`).join('\n')}
+
 # 命名规范 (25分)
 
 评分标准：
@@ -295,7 +384,9 @@ async function analyzeCode() {
 * 命名是否清晰表达了意图 (10分)
 * 是否存在误导性的命名 (5分)
 
-请列出具体的扣分项和扣分原因。
+发现的问题：
+* [文件路径:行号] 具体问题描述
+* ...
 
 # 潜在问题 (25分)
 
@@ -305,7 +396,9 @@ async function analyzeCode() {
 * 安全风险 (5分)
 * 边界情况处理 (5分)
 
-请列出具体的扣分项和扣分原因。
+发现的问题：
+* [文件路径:行号] 具体问题描述
+* ...
 
 # 逻辑严谨性 (25分)
 
@@ -315,7 +408,9 @@ async function analyzeCode() {
 * 错误处理是否完善 (5分)
 * 是否存在冗余或重复代码 (5分)
 
-请列出具体的扣分项和扣分原因。
+发现的问题：
+* [文件路径:行号] 具体问题描述
+* ...
 
 # 代码结构 (25分)
 
@@ -325,24 +420,40 @@ async function analyzeCode() {
 * 代码复用性 (5分)
 * 可维护性和可扩展性 (5分)
 
-请列出具体的扣分项和扣分原因。
+发现的问题：
+* [文件路径:行号] 具体问题描述
+* ...
 
 # 总评
 
 * 总分：[计算总分]
-* 主要优点：[列出代码的主要优点]
-* 主要问题：[列出需要重点改进的问题]
-* 改进建议：[给出具体的改进建议]
+* 主要优点：
+  * [文件路径] 优点描述
+  * ...
+* 主要问题：
+  * [文件路径:行号] 问题描述
+  * ...
+* 改进建议：
+  * [文件路径] 具体改进建议
+  * ...
 \`\`\`
-
-请严格按照上述格式输出，确保整个输出内容都包含在 \`\`\`markdown 代码块中。
 
 提交信息：${selectedCommit.value.message}
+
 代码变更：
+${diffFiles.value.map(f => `
+文件：${f.path}
 \`\`\`diff
-${diffFiles.value.map(f => f.diff).join('\n')}
+${f.diff}
 \`\`\`
+`).join('\n')}
 `
+
+    // 发送分析请求
+    await window.electronAPI.ai.analyze(
+      userStore.aiBaseUrl.trim(),
+      userStore.aiApiKey.trim(),
+      prompt
     )
   } catch (error) {
     let errorMessage = 'AI分析失败'
@@ -353,30 +464,56 @@ ${diffFiles.value.map(f => f.diff).join('\n')}
         errorMessage = 'AI服务器响应超时，请稍后重试'
       } else if (error.message.includes('certificate')) {
         errorMessage = 'SSL证书验证失败，请检查API地址是否正确'
-      } else if (error.message.includes('418')) {
-        errorMessage = 'API地址不正确或未包含必要的端点路径，请确保使用完整的API地址（例如：https://api.deepseek.com/v1/chat/completions）'
+      } else if (error.message.includes('400')) {
+        errorMessage = 'API请求格式错误，请检查API地址是否完整，以及API密钥是否正确'
+      } else if (error.message.includes('401')) {
+        errorMessage = 'API密钥无效或已过期'
+      } else if (error.message.includes('403')) {
+        errorMessage = 'API密钥没有权限访问该服务'
+      } else if (error.message.includes('404')) {
+        errorMessage = 'API地址不存在，请检查API地址是否正确'
+      } else if (error.message.includes('429')) {
+        errorMessage = 'API请求次数超限，请稍后重试'
+      } else if (error.message.includes('500')) {
+        errorMessage = 'AI服务器内部错误，请稍后重试'
       } else {
         errorMessage += `：${error.message}`
       }
     }
     ElMessage.error(errorMessage)
+    showAnalysisDialog.value = false
   } finally {
     if (cleanup) {
       try {
         cleanup()
       } catch (e) {
-        // 保留错误处理，但移除日志
+        console.error('Error cleaning up:', e)
       }
     }
     isAnalyzing.value = false
   }
 }
 
-// 添加markdown渲染函数
+// 修改 markdown 渲染函数
 function renderMarkdown(text) {
   if (!text) return ''
-  console.log(text)
-  return md.render(text)
+  
+  // 移除开头的 ```markdown 和结尾的 ```
+  let cleanText = text
+  if (cleanText.startsWith('```markdown')) {
+    cleanText = cleanText.substring('```markdown'.length)
+  } else if (cleanText.startsWith('```')) {
+    cleanText = cleanText.substring('```'.length)
+  }
+  
+  if (cleanText.endsWith('```')) {
+    cleanText = cleanText.substring(0, cleanText.length - 3)
+  }
+  
+  // 去除可能存在的首尾空白字符
+  cleanText = cleanText.trim()
+  
+  return md.render(cleanText)
 }
 
 function formatDiff(diff) {
@@ -413,15 +550,120 @@ function closeAnalysis() {
   }, 300)
 }
 
-function handleSizeChange(newSize) {
-  pageSize.value = newSize
-  currentPage.value = 1
+function handleSizeChange(val) {
+  pageSize.value = val
+  currentPage.value = 1  // 重置到第一页
   loadCommits()
 }
 
-function handleCurrentChange(newPage) {
-  currentPage.value = newPage
+function handleCurrentChange(val) {
+  currentPage.value = val
   loadCommits()
+}
+
+async function getCommits(page = 1, pageSize = 50) {
+  try {
+    const result = repoType.value === 'git' 
+      ? await window.electronAPI.git.getCommits(repoPath.value, page, pageSize)
+      : await window.electronAPI.svn.getCommits(repoPath.value, page, pageSize)
+    
+    commits.value = result.commits
+    // ... 处理分页等逻辑 ...
+  } catch (error) {
+    ElMessage.error(`获取${repoType.value}提交记录失败: ${error.message}`)
+  }
+}
+
+async function getDiff(commit) {
+  try {
+    const diff = repoType.value === 'git'
+      ? await window.electronAPI.git.show(repoPath.value, commit.hash)
+      : await window.electronAPI.svn.diff(repoPath.value, commit.hash)
+    
+    // ... 处理差异显示逻辑 ...
+  } catch (error) {
+    ElMessage.error(`获取代码差异失败: ${error.message}`)
+  }
+}
+
+async function selectRepo() {
+  try {
+    const result = await window.electronAPI.selectDirectory()
+    if (result) {
+      if (repoType.value === 'svn') {
+        try {
+          await window.electronAPI.svn.getCommits(result, 1, 1)
+        } catch (error) {
+          if (error.message.includes('未安装 SVN')) {
+            ElMessageBox.alert(
+              '请按照以下步骤安装 SVN 命令行工具：\n\n' +
+              '1. 下载并安装 TortoiseSVN (https://tortoisesvn.net/downloads.html)\n' +
+              '2. 安装时勾选"command line client tools"\n' +
+              '3. 安装完成后重启应用\n\n' +
+              '如果已安装 TortoiseSVN，请确保安装时勾选了"command line client tools"选项。',
+              'SVN 工具未安装',
+              {
+                confirmButtonText: '知道了',
+                type: 'warning'
+              }
+            )
+            return
+          }
+        }
+      }
+      currentRepo.value = result
+      currentPage.value = 1
+      await loadCommits()
+    }
+  } catch (error) {
+    ElMessage.error(`选择${repoType.value.toUpperCase()}仓库失败: ${error.message}`)
+  }
+}
+
+// 复制分析结果
+async function copyAnalysis() {
+  if (!aiAnalysis.value?.items?.[0]?.content) return
+  
+  isCopying.value = true
+  try {
+    // 获取纯文本内容（移除 markdown 标记）
+    let content = aiAnalysis.value.items[0].content
+    if (content.startsWith('```markdown')) {
+      content = content.substring('```markdown'.length)
+    }
+    if (content.endsWith('```')) {
+      content = content.substring(0, content.length - 3)
+    }
+    content = content.trim()
+    
+    await navigator.clipboard.writeText(content)
+    ElMessage.success('分析结果已复制到剪贴板')
+  } catch (error) {
+    ElMessage.error('复制失败，请手动复制')
+    console.error('Copy failed:', error)
+  } finally {
+    isCopying.value = false
+  }
+}
+
+function showUserSettings() {
+  userSettingsVisible.value = true
+}
+
+function showAiConfig() {
+  aiConfigVisible.value = true
+}
+
+// 检查用户设置
+onMounted(() => {
+  if (!userStore.isUserSet) {
+    userSettingsVisible.value = true
+  }
+})
+
+// 计算序号
+function getIndex(index) {
+  return (currentPage.value - 1) * pageSize.value + index + 1
 }
 </script>
 
@@ -519,10 +761,9 @@ function handleCurrentChange(newPage) {
 .pagination-container {
   margin-top: 20px;
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   padding: 10px 0;
   background-color: #fff;
-  flex-shrink: 0;
 }
 
 /* 固定表头 */
@@ -571,6 +812,10 @@ function handleCurrentChange(newPage) {
   padding: 10px;
   background-color: #f1f8ff;
   border-bottom: 1px solid #e6e6e6;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: #24292e;
 }
 
 .diff-view-wrapper {
@@ -641,12 +886,6 @@ function handleCurrentChange(newPage) {
   to { transform: rotate(360deg); }
 }
 
-.analysis-description {
-  white-space: pre-wrap;
-  line-height: 1.6;
-  color: #606266;
-}
-
 .analysis-dialog {
   :deep(.el-dialog) {
     margin-top: 5vh !important;
@@ -692,6 +931,14 @@ function handleCurrentChange(newPage) {
   padding-bottom: 10px;
   border-bottom: 1px solid #eee;
   flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.meta-info {
+  display: flex;
+  gap: 20px;
 }
 
 .markdown-body {
@@ -839,49 +1086,6 @@ function handleCurrentChange(newPage) {
   background-color: #f6f8fa;
 }
 
-.analysis-description-wrapper {
-  position: relative;
-  padding: 10px;
-  background-color: #ffffff;
-  border-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.typing::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2px;
-  height: 16px;
-  background-color: #409EFF;
-  animation: blink 0.8s step-end infinite;
-}
-
-.analysis-item {
-  margin-bottom: 20px;
-  background-color: #f8f9fa;
-  border-radius: 8px;
-  padding: 15px;
-}
-
-.analysis-item h4 {
-  color: #409EFF;
-  margin: 0 0 10px 0;
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.analysis-description {
-  margin: 0;
-  line-height: 1.6;
-  color: #2c3e50;
-  font-size: 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 .typing-indicator {
   display: flex;
   justify-content: center;
@@ -905,11 +1109,6 @@ function handleCurrentChange(newPage) {
 @keyframes bounce {
   0%, 80%, 100% { transform: scale(0); }
   40% { transform: scale(1); }
-}
-
-@keyframes blink {
-  from, to { opacity: 0; }
-  50% { opacity: 1; }
 }
 
 .analysis-dialog {
@@ -986,5 +1185,144 @@ function handleCurrentChange(newPage) {
 
 :deep(*::-webkit-scrollbar-thumb:hover) {
   background: #a8a8a8;
+}
+
+.diff-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background-color: #fff;
+  border-radius: 4px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  gap: 16px;
+}
+
+.diff-loading .loading-icon {
+  animation: rotate 1s linear infinite;
+  color: #409EFF;
+}
+
+.diff-loading span {
+  color: #606266;
+  font-size: 14px;
+}
+
+@keyframes rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 优化文件头部样式 */
+.file-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: bold;
+  padding: 12px 16px;
+  background-color: #f1f8ff;
+  border-bottom: 1px solid #e1e4e8;
+  display: flex;
+  align-items: center;
+  font-size: 13px;
+  color: #24292e;
+}
+
+/* 优化差异内容的容器样式 */
+.diff-scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #e1e4e8;
+  border-radius: 6px;
+  background-color: #fff;
+}
+
+.diff-content {
+  border-bottom: 1px solid #e1e4e8;
+}
+
+.diff-content:last-child {
+  border-bottom: none;
+}
+
+.diff-view-wrapper {
+  background-color: #fff;
+  overflow-x: auto;
+}
+
+.diff-view {
+  margin: 0;
+  padding: 16px;
+  white-space: pre;
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+/* 优化 markdown-body 样式 */
+:deep(.markdown-body) {
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 16px;
+  background-color: #ffffff;
+}
+
+/* 优化分页器样式 */
+.pagination-container {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+  padding: 10px 0;
+  background-color: #fff;
+}
+
+:deep(.el-pagination) {
+  --el-pagination-button-bg-color: #f4f4f5;
+  --el-pagination-hover-color: #409eff;
+}
+
+:deep(.el-pagination.is-background .el-pager li:not(.is-disabled).is-active) {
+  background-color: #409eff;
+}
+
+:deep(.el-pagination .el-select .el-input) {
+  width: 110px;
+}
+
+/* 美化分页按钮 */
+:deep(.el-pagination.is-background .el-pager li) {
+  margin: 0 4px;
+  min-width: 32px;
+  border-radius: 4px;
+}
+
+:deep(.el-pagination.is-background .btn-prev),
+:deep(.el-pagination.is-background .btn-next) {
+  border-radius: 4px;
+  padding: 0 12px;
+  min-width: 80px;
+}
+
+/* 优化跳转输入框样式 */
+:deep(.jump-input.el-input) {
+  width: 50px;
+  margin: 0 6px;
+}
+
+:deep(.jump-input .el-input__inner) {
+  text-align: center;
+  padding: 0 4px;
+}
+
+/* 优化分页器中文字的样式 */
+:deep(.el-pagination) {
+  --el-pagination-font-size: 13px;
+  font-size: 13px;
+}
+
+:deep(.el-pagination .el-select .el-input .el-input__inner) {
+  font-size: 13px;
 }
 </style> 
