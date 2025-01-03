@@ -40,5 +40,12 @@ export default defineConfig({
   },
   optimizeDeps: {
     exclude: ['electron', 'simple-git']
+  },
+  electron: {
+    builderOptions: {
+      win: {
+        icon: './build/icon.ico'
+      }
+    }
   }
 }) 

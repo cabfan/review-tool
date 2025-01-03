@@ -377,27 +377,32 @@ async function createWindow() {
     return
   }
 
-  const mainWindow = new BrowserWindow({
+  const iconPath = isDev 
+    ? path.join(__dirname, 'build/icon.ico')
+    : path.join(process.resourcesPath, 'build/icon.ico')
+
+  const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    icon: iconPath,
     autoHideMenuBar: true,
     frame: true,
     webPreferences: {
-      nodeIntegration: false,
+      nodeIntegration: true,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
     }
   })
 
-  mainWindow.setMenu(null)
+  win.setMenu(null)
 
   if (isDev) {
     // 等待 Vite 开发服务器启动
     await new Promise(resolve => setTimeout(resolve, 2000))
     try {
-      await mainWindow.loadURL('http://localhost:5173')
+      await win.loadURL('http://localhost:5173')
       // 打开开发工具
-      mainWindow.webContents.openDevTools()
+      win.webContents.openDevTools()
     } catch (error) {
       console.error('Failed to load dev server:', error)
       dialog.showErrorBox('启动错误', '无法连接到开发服务器，请确保运行了 "npm run dev"')
@@ -406,7 +411,7 @@ async function createWindow() {
   } else {
     const indexPath = path.join(__dirname, 'dist', 'index.html')
     try {
-      await mainWindow.loadFile(indexPath)
+      await win.loadFile(indexPath)
     } catch (error) {
       console.error('Failed to load production build:', error)
       dialog.showErrorBox('启动错误', '无法加载应用，请确保已经运行了 "npm run build"')
@@ -414,7 +419,7 @@ async function createWindow() {
     }
   }
 
-  return mainWindow
+  return win
 }
 
 app.whenReady().then(async () => {

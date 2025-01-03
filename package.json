@@ -4,8 +4,8 @@
   "description": "Code review tool with AI analysis for Git and SVN",
   "license": "MIT",
   "author": {
-    "name": "Your Name",
-    "email": "your.email@example.com"
+    "name": "Zapz",
+    "email": "361250387@qq.com"
   },
   "main": "main.js",
   "scripts": {
@@ -46,7 +46,8 @@
     "copyright": "Copyright © 2024 Your Name",
     "forceCodeSigning": false,
     "directories": {
-      "output": "dist_electron"
+      "output": "dist_electron",
+      "buildResources": "build"
     },
     "files": [
       "dist/**/*",
@@ -65,6 +66,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    }
+    },
+    "icon": "build/icon.ico"
   }
 }
